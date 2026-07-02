@@ -1,6 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:shopping_app/data/categories.dart';
+import 'package:shopping_app/data/key.dart';
 import 'package:shopping_app/models/grocery_item.dart';
 import 'package:shopping_app/widgets/new_item.dart';
+import 'package:http/http.dart' as http;
 
 class GroceryList extends StatefulWidget {
   const GroceryList({super.key});
@@ -10,26 +15,81 @@ class GroceryList extends StatefulWidget {
 }
 
 class _GroceryListState extends State<GroceryList> {
-  final List<GroceryItem> _groceryItems = [];
+  List<GroceryItem> _groceryItems = [];
+  var _isLoading = true;
+  String? _error;
+
+  @override
+  initState() {
+    super.initState();
+    _loadItems();
+  }
+
+  void _loadItems() async {
+    final url = Uri.https(
+      apiKey,
+      'shopping-list.json',
+    );
+    final response = await http.get(url);
+    if (response.statusCode >= 400) {
+      setState(() {
+        _error = 'Failed to fetch data. Please try again later ';
+      });
+    }
+    debugPrint(response.body);
+    if (response.body == 'null') {
+      setState(() {
+        _isLoading = false;
+      });
+      return;
+    }
+    final Map<String, dynamic> listData = json.decode(
+      response.body,
+    );
+    final List<GroceryItem> loadedItems = [];
+    for (final item in listData.entries) {
+      final category = categories.entries
+          .firstWhere(
+            (catItem) => catItem.value.title == item.value['category'],
+          )
+          .value;
+      loadedItems.add(
+        GroceryItem(
+          id: item.key,
+          name: item.value['name'],
+          quantity: item.value['quantity'],
+          category: category,
+        ),
+      );
+    }
+    setState(() {
+      _groceryItems = loadedItems;
+      _isLoading = false;
+    });
+  }
+
   void _addItem() async {
     final newItem = await Navigator.of(context).push<GroceryItem>(
       MaterialPageRoute(
         builder: (ctx) => const NewItem(),
       ),
     );
-    if (newItem == null) return;
+    // _loadItems();
+    if (newItem == null) {
+      return;
+    }
     setState(() {
       _groceryItems.add(newItem);
     });
   }
 
-  void _showInfoMessage(String name) {
+  void _showInfoMessage(String name, [IconData icon = Icons.check]) {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(
       SnackBar(
-        backgroundColor: Colors.black54,
+        backgroundColor: Colors.black87,
         content: Row(
           children: [
             Container(
@@ -38,7 +98,7 @@ class _GroceryListState extends State<GroceryList> {
                 color: Colors.white24,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.check),
+              child: Icon(icon),
             ),
             const SizedBox(
               width: 8,
@@ -67,11 +127,30 @@ class _GroceryListState extends State<GroceryList> {
     );
   }
 
-  void _onRemoveGrocery(GroceryItem item) {
+  void _onRemoveGrocery(GroceryItem item) async {
+    final index = _groceryItems.indexOf(item);
     setState(() {
       _groceryItems.remove(item);
     });
-    _showInfoMessage(item.name);
+    _showInfoMessage(
+      item.name,
+    );
+
+    final url = Uri.https(
+      apiKey,
+      'shopping-list/${item.id}.json',
+    );
+    final response = await http.delete(url);
+    debugPrint(response.statusCode.toString());
+    if (response.statusCode >= 400) {
+      setState(() {
+        _groceryItems.insert(index, item);
+      });
+      _showInfoMessage(
+        'Failed to remove ${item.name}. Please Try again later,',
+        Icons.warning_amber,
+      );
+    }
   }
 
   @override
@@ -88,6 +167,10 @@ class _GroceryListState extends State<GroceryList> {
             background: Container(
               margin: const EdgeInsets.symmetric(horizontal: 16),
               color: Colors.red,
+              // decoration: BoxDecoration(
+              //   // shape: BoxShape.rectangle,
+              //   borderRadius: BorderRadius.circular(16),
+              // ),
             ),
             key: ValueKey(_groceryItems[index].id),
             onDismissed: (direction) => _onRemoveGrocery(_groceryItems[index]),
@@ -102,6 +185,19 @@ class _GroceryListState extends State<GroceryList> {
             ),
           );
         },
+      );
+    }
+    if (_isLoading) {
+      mainContent = const Center(
+        child: CircularProgressIndicator(
+          color: Color.fromARGB(255, 147, 229, 250),
+          strokeWidth: 2,
+        ),
+      );
+    }
+    if (_error != null) {
+      mainContent = Center(
+        child: Text(_error!),
       );
     }
     return Scaffold(
